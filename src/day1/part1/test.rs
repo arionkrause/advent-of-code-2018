@@ -9,7 +9,7 @@ fn test1() {
 
 #[test]
 fn test2() {
-    let input = read_file("day1/input_test_part1_test2").unwrap();
+    let input = read_file("day1/input_test_part2_test1").unwrap();
     assert_eq!(solve(&input), 3);
 }
 
