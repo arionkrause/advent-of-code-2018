@@ -1,106 +1,57 @@
-use std::collections::HashSet;
 use regex::Regex;
 use std::collections::HashMap;
+use std::cmp::Ordering;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 struct Location {
+    id: usize,
     x: usize,
     y: usize,
 }
 
-pub fn solve(input: &str) -> usize {
-    let locations: HashSet<Location> = get_locations(&input);
-    let (top_left, bottom_right, border_touching_locations) = get_border_stats(&locations);
-    let mut locations_scores: HashMap<Location, usize> = HashMap::new();
-
-    for x in top_left.x..=bottom_right.x {
-        for y in top_left.y..=bottom_right.y {
-            if let Some(closest_location) = get_closest_location(&locations, x, y) {
-                if border_touching_locations.contains(&closest_location) {
-                    continue;
-                }
-
-                locations_scores.entry(closest_location)
-                    .and_modify(|e| *e += 1)
-                    .or_insert(1);
-            }
-        }
+impl Ord for Location {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.id.cmp(&other.id)
     }
-
-    for y in top_left.y..=bottom_right.y {
-        if let Some(closest_location) = get_closest_location(&locations, top_left.x, y) {
-            let matching_locations: Vec<_> = locations_scores
-                .iter()
-                .filter(|&(l, _)| l == &closest_location)
-                .map(|(k, _)| k.clone())
-                .collect();
-
-            for matching_location in matching_locations {
-                locations_scores.remove(&matching_location);
-            }
-        }
-    }
-
-    for x in top_left.x..=bottom_right.x {
-        if let Some(closest_location) = get_closest_location(&locations, x, bottom_right.y) {
-            let matching_locations: Vec<_> = locations_scores
-                .iter()
-                .filter(|&(l, _)| l == &closest_location)
-                .map(|(k, _)| k.clone())
-                .collect();
-
-            for matching_location in matching_locations {
-                locations_scores.remove(&matching_location);
-            }
-        }
-    }
-
-    for y in top_left.y..=bottom_right.y {
-        if let Some(closest_location) = get_closest_location(&locations, bottom_right.x, y) {
-            let matching_locations: Vec<_> = locations_scores
-                .iter()
-                .filter(|&(l, _)| l == &closest_location)
-                .map(|(k, _)| k.clone())
-                .collect();
-
-            for matching_location in matching_locations {
-                locations_scores.remove(&matching_location);
-            }
-        }
-    }
-
-    for x in top_left.x..=bottom_right.x {
-        if let Some(closest_location) = get_closest_location(&locations, x, top_left.y) {
-            let matching_locations: Vec<_> = locations_scores
-                .iter()
-                .filter(|&(l, _)| l == &closest_location)
-                .map(|(k, _)| k.clone())
-                .collect();
-
-            for matching_location in matching_locations {
-                locations_scores.remove(&matching_location);
-            }
-        }
-    }
-
-    *locations_scores.iter().max_by(|&x, &y| x.1.cmp(y.1)).unwrap().1
 }
 
-fn get_locations(input: &str) -> HashSet<Location> {
-    let re = Regex::new(r"^(\d+), (\d+)$").unwrap();
-    let mut locations = HashSet::new();
+impl PartialOrd for Location {
+    fn partial_cmp(&self, other: &Location) -> Option<Ordering> {
+        Some(self.id.cmp(&other.id))
+    }
+}
 
-    for line in input.lines() {
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct Border {
+    top: usize,
+    right: usize,
+    bottom: usize,
+    left: usize,
+}
+
+pub fn solve(input: &str) -> usize {
+    let locations= get_locations(&input);
+    let border = get_border(&locations);
+    let locations_with_infinite_areas = get_locations_with_infinite_areas(&locations, &border);
+    let finite_areas = get_finite_areas(&locations, &border, &locations_with_infinite_areas);
+    *finite_areas.iter().max_by(|&a, &b| a.1.cmp(b.1)).unwrap().1
+}
+
+fn get_locations(input: &str) -> Vec<Location> {
+    let re = Regex::new(r"^(\d+), (\d+)$").unwrap();
+    let mut locations: Vec<Location> = Vec::new();
+
+    for (index, line) in input.lines().enumerate() {
         let captures = re.captures(line).unwrap();
         let x = captures.get(2).unwrap().as_str().parse::<usize>().unwrap();
         let y = captures.get(1).unwrap().as_str().parse::<usize>().unwrap();
-        locations.insert(Location {x, y});
+        locations.push(Location { id: index, x, y });
     }
 
     locations
 }
 
-fn get_border_stats(locations: &HashSet<Location>) -> (Location, Location, HashSet<Location>) {
+fn get_border(locations: &[Location]) -> Border {
     let mut top: Option<usize> = None;
     let mut right: Option<usize> = None;
     let mut bottom: Option<usize> = None;
@@ -124,38 +75,111 @@ fn get_border_stats(locations: &HashSet<Location>) -> (Location, Location, HashS
         }
     }
 
-    let mut border_locations = HashSet::new();
-
-    for location in locations {
-        if location.x == left.unwrap() || location.x == right.unwrap() || location.y == top.unwrap() || location.y == bottom.unwrap() {
-            border_locations.insert(location.clone());
-        }
-    }
-
-    (Location { x: left.unwrap(), y: top.unwrap() }, Location { x: right.unwrap(), y: bottom.unwrap() }, border_locations)
+    Border {top: top.unwrap(), right: right.unwrap(), bottom: bottom.unwrap(), left: left.unwrap() }
 }
 
-fn get_closest_location(locations: &HashSet<Location>, x: usize, y: usize) -> Option<Location> {
-    let mut distances: HashMap<Location, usize> = HashMap::new();
-//eprintln!("x = {:?}, y = {:?}", x, y);
+fn get_locations_with_infinite_areas<'a>(locations: &'a[Location], border: &Border) -> Vec<&'a Location>{
+    let mut locations_with_infinite_areas = Vec::new();
+    let mut current_x = border.left;
+    let mut current_y = border.top;
+
+    while current_x < border.right {
+        match get_closest_location(locations, current_x, current_y) {
+            Some(closest_location) => locations_with_infinite_areas.push(closest_location),
+            _ => {},
+        }
+
+        current_x += 1;
+    }
+
+    while current_y < border.bottom {
+        match get_closest_location(locations, current_x, current_y) {
+            Some(closest_location) => locations_with_infinite_areas.push(closest_location),
+            _ => {},
+        }
+
+        current_y += 1;
+    }
+
+    while current_x > border.left {
+        match get_closest_location(locations, current_x, current_y) {
+            Some(closest_location) => locations_with_infinite_areas.push(closest_location),
+            _ => {},
+        }
+
+        current_x -= 1;
+    }
+
+    while current_y > border.top {
+        match get_closest_location(locations, current_x, current_y) {
+            Some(closest_location) => locations_with_infinite_areas.push(closest_location),
+            _ => {},
+        }
+
+        current_y -= 1;
+    }
+
+    locations_with_infinite_areas.sort();
+    locations_with_infinite_areas.dedup();
+    locations_with_infinite_areas
+
+}
+
+fn get_closest_location(locations: &[Location], row: usize, column: usize) -> Option<&Location> {
+    let mut manhattan_distances = HashMap::new();
+
     for location in locations {
-        if location.x == x && location.y == y {
-            return Some(location.clone());
+        manhattan_distances.insert(location, get_manhattan_distance(location, row, column));
+    }
+
+    let mut closest_manhattan_distance_location: Option<(&Location, usize)> = None;
+
+    for (location, manhattan_distance) in manhattan_distances.iter() {
+        if closest_manhattan_distance_location == None || manhattan_distance < &closest_manhattan_distance_location.unwrap().1 {
+            closest_manhattan_distance_location = Some((*location, *manhattan_distance));
         }
     }
 
-    for location in locations {
-        let manhattan_distance = ((location.x as isize - x as isize).abs() + (location.y as isize - y as isize).abs()) as usize;
-        distances.insert(location.clone(), manhattan_distance);
+    let mut amount_locations_closest_manhattan_distance = 0;
+
+    for (_, manhattan_distance) in manhattan_distances.iter() {
+        if manhattan_distance == &closest_manhattan_distance_location.unwrap().1 {
+            amount_locations_closest_manhattan_distance += 1;
+        }
     }
 
-    let smallest_distance_tuple = distances.iter().min_by(|&x, &y| x.1.cmp(y.1)).unwrap();
-
-    if distances.iter().filter(|d| d.1 == smallest_distance_tuple.1).count() > 1 {
+    if amount_locations_closest_manhattan_distance > 1 {
         return None;
     }
 
-    Some(smallest_distance_tuple.0.clone())
+    Some(closest_manhattan_distance_location.unwrap().0)
+}
+
+fn get_manhattan_distance(location: &Location, row: usize, column: usize) -> usize {
+    let x_distance = i64::abs(location.x as i64 - row as i64) as usize;
+    let y_distance = i64::abs(location.y as i64 - column as i64) as usize;
+    x_distance + y_distance
+}
+
+fn get_finite_areas<'a>(locations: &'a [Location], border: &Border, locations_with_infinite_areas: &Vec<&'a Location>) -> HashMap<&'a Location, usize> {
+    let mut finite_areas = HashMap::new();
+
+    for row in border.top..=border.bottom {
+        for column in border.left..=border.right {
+            match get_closest_location(locations, row, column) {
+                Some(closest_location) => {
+                    if !locations_with_infinite_areas.contains(&closest_location) {
+                        finite_areas.entry(closest_location)
+                            .and_modify(|e| { *e += 1 })
+                            .or_insert(1);
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+
+    finite_areas
 }
 
 #[cfg(test)]
